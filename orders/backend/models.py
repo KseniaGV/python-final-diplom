@@ -128,6 +128,13 @@ class Shop(models.Model):
         verbose_name='Ссылка'
     )
 
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='shop',
+        verbose_name='Пользователь'
+    )
+
     def __str__(self):
         return self.name
 
@@ -194,6 +201,16 @@ class ProductInfo(models.Model):
         related_name='products',
         on_delete=models.CASCADE,
         verbose_name='Магазин'
+    )
+
+    external_id = models.PositiveIntegerField(
+        verbose_name='Внешний ID товара'
+    )
+
+    model = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name='Модель'
     )
 
     name = models.CharField(
