@@ -210,3 +210,47 @@ class UserRegister(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+class UserLogin(APIView):
+    """
+    Авторизация пользователя
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        password = request.data.get('password')
+
+        if not email or not password:
+            return Response(
+                {
+                    'Status': False,
+                    'Error': 'Необходимо указать email и пароль',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = authenticate(
+            request=request,
+            email=email,
+            password=password,
+        )
+
+        if user is None:
+            return Response(
+                {
+                    'Status': False,
+                    'Error': 'Неверный email или пароль',
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        token, _ = Token.objects.get_or_create(user=user)
+
+        return Response(
+            {
+                'Status': True,
+                'Token': token.key,
+            },
+            status=status.HTTP_200_OK,
+        )
