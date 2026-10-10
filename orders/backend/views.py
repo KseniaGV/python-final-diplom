@@ -4,8 +4,12 @@ import requests
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.http import JsonResponse
-
+from django.contrib.auth import authenticate
 from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.authtoken.models import Token
+from rest_framework import status
 
 from .models import (
     Shop,
@@ -14,6 +18,7 @@ from .models import (
     ProductInfo,
     Parameter,
     ProductParameter,
+    User
 )
 
 
@@ -154,4 +159,54 @@ class PartnerUpdate(APIView):
             {
                 'Status': True
             }
+        )
+
+class UserRegister(APIView):
+    """
+    Регистрация нового пользователя
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        password = request.data.get('password')
+        first_name = request.data.get('first_name', '')
+        last_name = request.data.get('last_name', '')
+
+        if not email or not password:
+            return Response(
+                {
+                    'Status': False,
+                    'Error': 'Необходимо указать email и пароль',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {
+                    'Status': False,
+                    'Error': 'Пользователь с таким email уже существует',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.create_user(
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            type='buyer',
+            is_active=True,
+        )
+
+        token, _ = Token.objects.get_or_create(user=user)
+
+        return Response(
+            {
+                'Status': True,
+                'Token': token.key,
+            },
+            status=status.HTTP_201_CREATED,
         )
