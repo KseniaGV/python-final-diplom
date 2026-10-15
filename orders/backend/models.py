@@ -1,3 +1,4 @@
+import uuid
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.validators import UnicodeUsernameValidator
@@ -364,3 +365,34 @@ class Contact(models.Model):
 
     def __str__(self):
         return self.value
+
+class ConfirmEmailToken(models.Model):
+    """
+    Токен для подтверждения электронной почты пользователя.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='confirm_email_tokens',
+        verbose_name='Пользователь'
+    )
+
+    key = models.CharField(
+        max_length=64,
+        unique=True,
+        default=uuid.uuid4,
+        verbose_name='Токен подтверждения'
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата создания'
+    )
+
+    def __str__(self):
+        return f'Токен пользователя {self.user.email}'
+
+    class Meta:
+        verbose_name = 'Токен подтверждения email'
+        verbose_name_plural = 'Токены подтверждения email'

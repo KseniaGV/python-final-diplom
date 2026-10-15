@@ -4,6 +4,7 @@ import requests
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.http import JsonResponse
+from django.core.mail import send_mail
 from django.contrib.auth import authenticate
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
@@ -18,7 +19,8 @@ from .models import (
     ProductInfo,
     Parameter,
     ProductParameter,
-    User
+    User,
+    ConfirmEmailToken
 )
 
 
@@ -163,7 +165,7 @@ class PartnerUpdate(APIView):
 
 class UserRegister(APIView):
     """
-    Регистрация нового пользователя
+    Регистрация нового пользователя с подтверждением email.
     """
 
     permission_classes = [AllowAny]
@@ -174,42 +176,112 @@ class UserRegister(APIView):
         first_name = request.data.get('first_name', '')
         last_name = request.data.get('last_name', '')
 
+        # Проверяем обязательные поля
         if not email or not password:
             return Response(
                 {
                     'Status': False,
-                    'Error': 'Необходимо указать email и пароль',
+                    'Error': 'Необходимо указать email и пароль'
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-        if User.objects.filter(email=email).exists():
+        # Проверяем, зарегистрирован ли пользователь
+        if User.objects.filter(email__iexact=email).exists():
             return Response(
                 {
                     'Status': False,
-                    'Error': 'Пользователь с таким email уже существует',
+                    'Error': 'Пользователь с таким email уже существует'
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Создаём неактивного пользователя
         user = User.objects.create_user(
             email=email,
             password=password,
             first_name=first_name,
             last_name=last_name,
             type='buyer',
-            is_active=True,
+            is_active=False
         )
 
-        token, _ = Token.objects.get_or_create(user=user)
+        # Создаём токен подтверждения
+        token = ConfirmEmailToken.objects.create(user=user)
+
+        # Отправляем письмо
+        send_mail(
+            subject='Подтверждение регистрации',
+            message=(
+                f'Здравствуйте, {first_name}!\n\n'
+                'Для подтверждения регистрации используйте токен:\n'
+                f'{token.key}\n\n'
+                'Передайте при подтверждении регистрации.'
+            ),
+            from_email=None,
+            recipient_list=[user.email],
+            fail_silently=False
+        )
 
         return Response(
             {
                 'Status': True,
-                'Token': token.key,
+                'Message': 'Пользователь создан. Проверьте email для подтверждения регистрации.'
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED
         )
+
+class ConfirmAccount(APIView):
+    """
+    Подтверждение регистрации пользователя по email и токену.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        key = request.data.get('token')
+
+        if not email or not key:
+            return Response(
+                {
+                    'Status': False,
+                    'Error': 'Необходимо указать email и токен'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Ищем токен нужного пользователя
+        token = ConfirmEmailToken.objects.select_related('user').filter(
+            user__email__iexact=email,
+            key=key
+        ).first()
+
+        if token is None:
+            return Response(
+                {
+                    'Status': False,
+                    'Error': 'Неверный email или токен'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Активируем пользователя
+        user = token.user
+        user.is_active = True
+        user.save(update_fields=['is_active'])
+
+        # Удаляем использованный токен
+        token.delete()
+
+        return Response(
+            {
+                'Status': True,
+                'Message': 'Email успешно подтверждён'
+            },
+            status=status.HTTP_200_OK
+        )
+
 class UserLogin(APIView):
     """
     Авторизация пользователя
