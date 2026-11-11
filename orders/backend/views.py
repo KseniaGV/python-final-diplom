@@ -11,6 +11,9 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from rest_framework import status
+from django.db.models import Q
+from django.shortcuts import get_object_or_404
+from .serializers import ProductInfoSerializer
 
 from .models import (
     Shop,
@@ -326,3 +329,52 @@ class UserLogin(APIView):
             },
             status=status.HTTP_200_OK,
         )
+class ProductList(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        products = ProductInfo.objects.select_related(
+            'product',
+            'product__category',
+            'shop'
+        ).prefetch_related('parameters__parameter').all()
+
+        shop_id = request.query_params.get('shop_id')
+        category_id = request.query_params.get('category_id')
+        search = request.query_params.get('search')
+
+        if shop_id:
+            products = products.filter(shop_id=shop_id)
+
+        if category_id:
+            products = products.filter(product__category_id=category_id)
+
+        if search:
+            products = products.filter(
+                Q(name__icontains=search) |
+                Q(model__icontains=search) |
+                Q(product__name__icontains=search) |
+                Q(shop__name__icontains=search)
+            )
+
+        serializer = ProductInfoSerializer(products, many=True)
+
+        return Response(serializer.data)
+
+
+class ProductDetail(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, product_info_id):
+        product = get_object_or_404(
+            ProductInfo.objects.select_related(
+                'product',
+                'product__category',
+                'shop'
+            ).prefetch_related('parameters__parameter'),
+            id=product_info_id
+        )
+
+        serializer = ProductInfoSerializer(product)
+
+        return Response(serializer.data)
