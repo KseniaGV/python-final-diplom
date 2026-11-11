@@ -8,6 +8,10 @@ from backend.views import (
     ConfirmAccount,
     ProductList,
     ProductDetail,
+    BasketView,
+    BasketAdd,
+    BasketRemove,
+    BasketUpdate,
 )
 
 
@@ -19,4 +23,8 @@ urlpatterns = [
     path('user/register/confirm/', ConfirmAccount.as_view()),
     path('products/', ProductList.as_view()),
     path('products/<int:product_info_id>/', ProductDetail.as_view()),
+    path('basket/', BasketView.as_view()),
+    path('basket/add/', BasketAdd.as_view()),
+    path('basket/remove/<int:item_id>/', BasketRemove.as_view()),
+    path('basket/update/<int:item_id>/', BasketUpdate.as_view()),
 ]

@@ -7,11 +7,12 @@ from django.http import JsonResponse
 from django.core.mail import send_mail
 from django.contrib.auth import authenticate
 from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from rest_framework import status
 from django.db.models import Q
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from .serializers import ProductInfoSerializer
 
@@ -23,7 +24,9 @@ from .models import (
     Parameter,
     ProductParameter,
     User,
-    ConfirmEmailToken
+    ConfirmEmailToken,
+    Order,
+    OrderItem
 )
 
 
@@ -330,6 +333,9 @@ class UserLogin(APIView):
             status=status.HTTP_200_OK,
         )
 class ProductList(APIView):
+    """
+    Получение списка товаров с поиском и фильтрацией
+    """
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -363,6 +369,10 @@ class ProductList(APIView):
 
 
 class ProductDetail(APIView):
+
+    """
+    Получение подробной информации об отдельном товаре
+    """
     permission_classes = [AllowAny]
 
     def get(self, request, product_info_id):
@@ -378,3 +388,187 @@ class ProductDetail(APIView):
         serializer = ProductInfoSerializer(product)
 
         return Response(serializer.data)
+
+class BasketView(APIView):
+    """
+    Просмотр корзины покупателя
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        basket, created = Order.objects.get_or_create(
+            user=request.user,
+            status='basket'
+        )
+
+        items = basket.ordered_items.select_related(
+            'product',
+            'shop'
+        )
+
+        basket_items = []
+        total_sum = 0
+
+        for item in items:
+            item_sum = item.product.product_infos.filter(
+                shop=item.shop
+            ).first()
+
+            price = item_sum.price if item_sum else 0
+            total = price * item.quantity
+            total_sum += total
+
+            basket_items.append({
+                'id': item.id,
+                'product': item.product.name,
+                'shop': item.shop.name,
+                'quantity': item.quantity,
+                'price': price,
+                'total': total,
+            })
+
+        return Response({
+            'id': basket.id,
+            'items': basket_items,
+            'total_sum': total_sum,
+        })
+
+
+class BasketAdd(APIView):
+
+    """
+    Добавление товара в корзину покупателя
+    """
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        product_info_id = request.data.get('product_info_id')
+        quantity = request.data.get('quantity', 1)
+
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError):
+            return Response(
+                {'Status': False, 'Error': 'Некорректное количество'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if quantity <= 0:
+            return Response(
+                {'Status': False, 'Error': 'Количество должно быть больше нуля'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        product_info = get_object_or_404(
+            ProductInfo,
+            id=product_info_id
+        )
+
+        if quantity > product_info.quantity:
+            return Response(
+                {'Status': False, 'Error': 'Недостаточно товара на складе'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        basket, created = Order.objects.get_or_create(
+            user=request.user,
+            status='basket'
+        )
+
+        item, created = OrderItem.objects.get_or_create(
+            order=basket,
+            product=product_info.product,
+            shop=product_info.shop,
+            defaults={'quantity': quantity}
+        )
+
+        if not created:
+            new_quantity = item.quantity + quantity
+
+            if new_quantity > product_info.quantity:
+                return Response(
+                    {'Status': False, 'Error': 'Недостаточно товара на складе'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            item.quantity = new_quantity
+            item.save()
+
+        return Response({
+            'Status': True,
+            'Message': 'Товар добавлен в корзину'
+        }, status=status.HTTP_201_CREATED)
+
+
+class BasketRemove(APIView):
+
+    """
+    Удаление товара из корзины покупателя
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, item_id):
+        item = get_object_or_404(
+            OrderItem,
+            id=item_id,
+            order__user=request.user,
+            order__status='basket'
+        )
+
+        item.delete()
+
+        return Response({
+            'Status': True,
+            'Message': 'Товар удалён из корзины'
+        })
+
+
+class BasketUpdate(APIView):
+
+    """
+    Изменение количества товара в корзине покупателя
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, item_id):
+        item = get_object_or_404(
+            OrderItem,
+            id=item_id,
+            order__user=request.user,
+            order__status='basket'
+        )
+
+        try:
+            quantity = int(request.data.get('quantity'))
+        except (TypeError, ValueError):
+            return Response(
+                {'Status': False, 'Error': 'Некорректное количество'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if quantity <= 0:
+            return Response(
+                {'Status': False, 'Error': 'Количество должно быть больше нуля'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        product_info = get_object_or_404(
+            ProductInfo,
+            product=item.product,
+            shop=item.shop
+        )
+
+        if quantity > product_info.quantity:
+            return Response(
+                {'Status': False, 'Error': 'Недостаточно товара на складе'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        item.quantity = quantity
+        item.save(update_fields=['quantity'])
+
+        return Response({
+            'Status': True,
+            'Message': 'Количество товара обновлено'
+        })
