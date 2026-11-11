@@ -6,6 +6,8 @@ from backend.views import (
     UserRegister,
     UserLogin,
     ConfirmAccount,
+    ProductList,
+    ProductDetail,
 )
 
 
@@ -15,4 +17,6 @@ urlpatterns = [
     path('user/register/', UserRegister.as_view()),
     path('user/login/', UserLogin.as_view()),
     path('user/register/confirm/', ConfirmAccount.as_view()),
+    path('products/', ProductList.as_view()),
+    path('products/<int:product_info_id>/', ProductDetail.as_view()),
 ]
