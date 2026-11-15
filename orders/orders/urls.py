@@ -12,6 +12,9 @@ from backend.views import (
     BasketAdd,
     BasketRemove,
     BasketUpdate,
+    ContactView,
+    ContactAdd,
+    ContactRemove,
 )
 
 
@@ -27,4 +30,7 @@ urlpatterns = [
     path('basket/add/', BasketAdd.as_view()),
     path('basket/remove/<int:item_id>/', BasketRemove.as_view()),
     path('basket/update/<int:item_id>/', BasketUpdate.as_view()),
+    path('contacts/', ContactView.as_view()),
+    path('contacts/add/', ContactAdd.as_view()),
+    path('contacts/remove/<int:contact_id>/', ContactRemove.as_view()),
 ]

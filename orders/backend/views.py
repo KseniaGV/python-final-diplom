@@ -26,7 +26,8 @@ from .models import (
     User,
     ConfirmEmailToken,
     Order,
-    OrderItem
+    OrderItem,
+    Contact
 )
 
 
@@ -571,4 +572,75 @@ class BasketUpdate(APIView):
         return Response({
             'Status': True,
             'Message': 'Количество товара обновлено'
+        })
+
+class ContactView(APIView):
+
+    """
+    Просмотр контактных данных покупателя
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        contacts = Contact.objects.filter(user=request.user)
+
+        result = []
+
+        for contact in contacts:
+            result.append({
+                'id': contact.id,
+                'type': contact.type,
+                'value': contact.value,
+            })
+
+        return Response(result)
+
+class ContactAdd(APIView):
+
+    """
+    Добавление контактных данных покупателя
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        contact_type = request.data.get('type')
+        value = request.data.get('value')
+
+        if not contact_type or not value:
+            return Response(
+                {'Status': False, 'Error': 'Необходимо указать тип и значение контакта'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        contact = Contact.objects.create(
+            user=request.user,
+            type=contact_type,
+            value=value
+        )
+
+        return Response({
+            'Status': True,
+            'id': contact.id,
+            'Message': 'Контакт успешно добавлен'
+        }, status=status.HTTP_201_CREATED)
+
+class ContactRemove(APIView):
+
+    """
+    Удаление контактных данных покупателя
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, contact_id):
+        contact = get_object_or_404(
+            Contact,
+            id=contact_id,
+            user=request.user
+        )
+
+        contact.delete()
+
+        return Response({
+            'Status': True,
+            'Message': 'Контакт успешно удалён'
         })
