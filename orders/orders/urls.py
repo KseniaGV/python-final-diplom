@@ -15,6 +15,9 @@ from backend.views import (
     ContactView,
     ContactAdd,
     ContactRemove,
+    OrderCreate,
+    OrderView,
+    OrderStatusUpdate,
 )
 
 
@@ -33,4 +36,7 @@ urlpatterns = [
     path('contacts/', ContactView.as_view()),
     path('contacts/add/', ContactAdd.as_view()),
     path('contacts/remove/<int:contact_id>/', ContactRemove.as_view()),
+    path('orders/create/', OrderCreate.as_view()),
+    path('orders/', OrderView.as_view()),
+    path('orders/<int:order_id>/status/', OrderStatusUpdate.as_view(), name='order-status-update'),
 ]

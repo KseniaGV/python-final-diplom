@@ -305,6 +305,15 @@ class Order(models.Model):
         verbose_name='Статус'
     )
 
+    contact = models.ForeignKey(
+        'Contact',
+        related_name='orders',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        verbose_name='Контакт доставки'
+    )
+
     def __str__(self):
         return f'Заказ №{self.id}'
 

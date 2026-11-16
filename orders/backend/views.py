@@ -6,6 +6,7 @@ from django.core.validators import URLValidator
 from django.http import JsonResponse
 from django.core.mail import send_mail
 from django.contrib.auth import authenticate
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -86,7 +87,7 @@ class PartnerUpdate(APIView):
 
         # Загружаем YAML-файл
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
         except requests.RequestException as error:
             return JsonResponse(
@@ -595,6 +596,7 @@ class ContactView(APIView):
 
         return Response(result)
 
+
 class ContactAdd(APIView):
 
     """
@@ -612,6 +614,29 @@ class ContactAdd(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        if contact_type not in ['phone', 'address']:
+            return Response(
+                {'Status': False, 'Error': 'Тип контакта должен быть phone или address'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        contacts_count = Contact.objects.filter(
+            user=request.user,
+            type=contact_type
+        ).count()
+
+        if contact_type == 'phone' and contacts_count >= 1:
+            return Response(
+                {'Status': False, 'Error': 'Можно добавить только один номер телефона'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if contact_type == 'address' and contacts_count >= 5:
+            return Response(
+                {'Status': False, 'Error': 'Можно добавить не более пяти адресов'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         contact = Contact.objects.create(
             user=request.user,
             type=contact_type,
@@ -623,6 +648,7 @@ class ContactAdd(APIView):
             'id': contact.id,
             'Message': 'Контакт успешно добавлен'
         }, status=status.HTTP_201_CREATED)
+
 
 class ContactRemove(APIView):
 
@@ -643,4 +669,166 @@ class ContactRemove(APIView):
         return Response({
             'Status': True,
             'Message': 'Контакт успешно удалён'
+        })
+
+class OrderCreate(APIView):
+
+    """
+    Оформление заказа покупателем
+    """
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if request.user.type != 'buyer':
+            return Response(
+                {
+                    'Status': False,
+                    'Error': 'Оформлять заказы могут только покупатели'
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+        contact_id = request.data.get('contact_id')
+
+        contact = get_object_or_404(
+            Contact,
+            id=contact_id,
+            user=request.user
+        )
+
+        basket = Order.objects.filter(
+            user=request.user,
+            status='basket'
+        ).first()
+
+        if not basket or not basket.ordered_items.exists():
+            return Response(
+                {'Status': False, 'Error': 'Корзина пуста'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        for item in basket.ordered_items.all():
+            product_info = ProductInfo.objects.filter(
+                product=item.product,
+                shop=item.shop
+            ).first()
+
+            if not product_info or item.quantity > product_info.quantity:
+                return Response(
+                    {
+                        'Status': False,
+                        'Error': f'Недостаточно товара: {item.product.name}'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        basket.contact = contact
+        basket.status = 'new'
+        basket.save(update_fields=['contact', 'status'])
+
+        # Отправляем письмо покупателю
+        send_mail(
+            subject='Ваш заказ успешно оформлен',
+            message=(
+                f'Здравствуйте, {request.user.first_name}!\n\n'
+                f'Ваш заказ №{basket.id} успешно оформлен.\n'
+                'Статус заказа: Новый.'
+            ),
+            from_email=None,
+            recipient_list=[request.user.email],
+            fail_silently=False
+        )
+
+        # Отправляем письмо администратору
+        send_mail(
+            subject=f'Новый заказ №{basket.id}',
+            message=(
+                f'Поступил новый заказ №{basket.id}.\n'
+                f'Покупатель: {request.user.email}\n'
+                f'Контакт доставки: {contact.value}'
+            ),
+            from_email=None,
+            recipient_list=[email for name, email in settings.ADMINS],
+            fail_silently=False
+        )
+
+        return Response({
+            'Status': True,
+            'Message': 'Заказ успешно оформлен',
+            'Order_id': basket.id
+        }, status=status.HTTP_201_CREATED)
+
+
+# Просмотр истории заказов покупателя
+class OrderView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        orders = Order.objects.filter(
+            user=request.user
+        ).exclude(status='basket').prefetch_related(
+            'ordered_items__product'
+        )
+
+        result = []
+
+        for order in orders:
+            items = []
+
+            for item in order.ordered_items.all():
+                items.append({
+                    'product': item.product.name,
+                    'quantity': item.quantity,
+                })
+
+            result.append({
+                'id': order.id,
+                'status': order.status,
+                'contact': order.contact.value if order.contact else None,
+                'items': items,
+            })
+
+        return Response(result)
+
+class OrderStatusUpdate(APIView):
+
+    """
+    Изменение статуса заказа поставщиком
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, order_id):
+        if request.user.type != 'shop':
+            return Response(
+                {'Status': False, 'Error': 'Доступ разрешён только поставщикам'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        order = get_object_or_404(
+            Order,
+            id=order_id,
+            ordered_items__shop__user=request.user
+        )
+
+        new_status = request.data.get('status')
+
+        valid_statuses = [
+            choice[0]
+            for choice in Order._meta.get_field('status').choices
+        ]
+
+        if new_status not in valid_statuses or new_status == 'basket':
+            return Response(
+                {'Status': False, 'Error': 'Некорректный статус заказа'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        order.status = new_status
+        order.save(update_fields=['status'])
+
+        return Response({
+            'Status': True,
+            'Message': 'Статус заказа обновлён',
+            'Order_id': order.id,
+            'New_status': order.status
         })

@@ -131,4 +131,8 @@ STATIC_URL = "static/"
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
+ADMINS = [
+    ('Администратор', 'admin@test.ru'),
+]
+
 DEFAULT_FROM_EMAIL = 'noreply@diplom.local'
