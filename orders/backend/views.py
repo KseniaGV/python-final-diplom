@@ -412,11 +412,7 @@ class BasketView(APIView):
         total_sum = 0
 
         for item in items:
-            item_sum = item.product.product_infos.filter(
-                shop=item.shop
-            ).first()
-
-            price = item_sum.price if item_sum else 0
+            price = item.price
             total = price * item.quantity
             total_sum += total
 
@@ -482,7 +478,10 @@ class BasketAdd(APIView):
             order=basket,
             product=product_info.product,
             shop=product_info.shop,
-            defaults={'quantity': quantity}
+            defaults={
+                'quantity': quantity,
+                'price': product_info.price
+            }
         )
 
         if not created:
@@ -495,6 +494,7 @@ class BasketAdd(APIView):
                 )
 
             item.quantity = new_quantity
+            item.price = product_info.price
             item.save()
 
         return Response({

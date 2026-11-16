@@ -346,6 +346,13 @@ class OrderItem(models.Model):
         verbose_name='Количество'
     )
 
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        verbose_name='Цена на момент заказа'
+    )
+
     def __str__(self):
         return self.product.name
 
