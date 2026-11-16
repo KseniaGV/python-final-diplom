@@ -8,7 +8,7 @@ from django.core.mail import send_mail
 from django.contrib.auth import authenticate
 from django.conf import settings
 from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from rest_framework import status
@@ -31,6 +31,17 @@ from .models import (
     Contact
 )
 
+class IsBuyer(BasePermission):
+    """
+    Доступ только для покупателей.
+    """
+
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.type == 'buyer'
+        )
 
 class PartnerUpdate(APIView):
     """
@@ -395,7 +406,7 @@ class BasketView(APIView):
     """
     Просмотр корзины покупателя
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     def get(self, request):
         basket, created = Order.objects.get_or_create(
@@ -437,15 +448,22 @@ class BasketAdd(APIView):
     """
     Добавление товара в корзину покупателя
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     @transaction.atomic
     def post(self, request):
         product_info_id = request.data.get('product_info_id')
-        quantity = request.data.get('quantity', 1)
+        raw_quantity = request.data.get('quantity', 1)
 
         try:
-            quantity = int(quantity)
+            if isinstance(raw_quantity, bool):
+                raise ValueError
+
+            quantity = int(raw_quantity)
+
+            if isinstance(raw_quantity, float) and not raw_quantity.is_integer():
+                raise ValueError
+
         except (TypeError, ValueError):
             return Response(
                 {'Status': False, 'Error': 'Некорректное количество'},
@@ -508,7 +526,7 @@ class BasketRemove(APIView):
     """
     Удаление товара из корзины покупателя
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     def delete(self, request, item_id):
         item = get_object_or_404(
@@ -531,7 +549,7 @@ class BasketUpdate(APIView):
     """
     Изменение количества товара в корзине покупателя
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     def patch(self, request, item_id):
         item = get_object_or_404(
@@ -541,8 +559,17 @@ class BasketUpdate(APIView):
             order__status='basket'
         )
 
+        raw_quantity = request.data.get('quantity')
+
         try:
-            quantity = int(request.data.get('quantity'))
+            if isinstance(raw_quantity, bool):
+                raise ValueError
+
+            quantity = int(raw_quantity)
+
+            if isinstance(raw_quantity, float) and not raw_quantity.is_integer():
+                raise ValueError
+
         except (TypeError, ValueError):
             return Response(
                 {'Status': False, 'Error': 'Некорректное количество'},
@@ -580,7 +607,7 @@ class ContactView(APIView):
     """
     Просмотр контактных данных покупателя
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     def get(self, request):
         contacts = Contact.objects.filter(user=request.user)
@@ -602,7 +629,7 @@ class ContactAdd(APIView):
     """
     Добавление контактных данных покупателя
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     def post(self, request):
         contact_type = request.data.get('type')
@@ -655,7 +682,7 @@ class ContactRemove(APIView):
     """
     Удаление контактных данных покупателя
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     def delete(self, request, contact_id):
         contact = get_object_or_404(
@@ -707,8 +734,8 @@ class OrderCreate(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        for item in basket.ordered_items.all():
-            product_info = ProductInfo.objects.filter(
+        for item in basket.ordered_items.select_related('product', 'shop'):
+            product_info = ProductInfo.objects.select_for_update().filter(
                 product=item.product,
                 shop=item.shop
             ).first()
@@ -726,31 +753,35 @@ class OrderCreate(APIView):
         basket.status = 'new'
         basket.save(update_fields=['contact', 'status'])
 
-        # Отправляем письмо покупателю
-        send_mail(
-            subject='Ваш заказ успешно оформлен',
-            message=(
-                f'Здравствуйте, {request.user.first_name}!\n\n'
-                f'Ваш заказ №{basket.id} успешно оформлен.\n'
-                'Статус заказа: Новый.'
-            ),
-            from_email=None,
-            recipient_list=[request.user.email],
-            fail_silently=False
-        )
+        # Отправляем письмо покупателю и администратору
+        def send_order_emails():
+            send_mail(
+                subject='Ваш заказ успешно оформлен',
+                message=(
+                    f'Здравствуйте, {request.user.first_name}!\n\n'
+                    f'Ваш заказ №{basket.id} успешно оформлен.\n'
+                    'Статус заказа: Новый.'
+                ),
+                from_email=None,
+                recipient_list=[request.user.email],
+                fail_silently=False
+            )
 
-        # Отправляем письмо администратору
-        send_mail(
-            subject=f'Новый заказ №{basket.id}',
-            message=(
-                f'Поступил новый заказ №{basket.id}.\n'
-                f'Покупатель: {request.user.email}\n'
-                f'Контакт доставки: {contact.value}'
-            ),
-            from_email=None,
-            recipient_list=[email for name, email in settings.ADMINS],
-            fail_silently=False
-        )
+            send_mail(
+                subject=f'Новый заказ №{basket.id}',
+                message=(
+                    f'Поступил новый заказ №{basket.id}.\n'
+                    f'Покупатель: {request.user.email}\n'
+                    f'Контакт доставки: {contact.value}'
+                ),
+                from_email=None,
+                recipient_list=[
+                    email for name, email in settings.ADMINS
+                ],
+                fail_silently=False
+            )
+
+        transaction.on_commit(send_order_emails)
 
         return Response({
             'Status': True,
@@ -761,7 +792,7 @@ class OrderCreate(APIView):
 
 # Просмотр истории заказов покупателя
 class OrderView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBuyer]
 
     def get(self, request):
         orders = Order.objects.filter(
@@ -823,8 +854,23 @@ class OrderStatusUpdate(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        old_status = order.status
+
         order.status = new_status
         order.save(update_fields=['status'])
+
+        if old_status != new_status:
+            transaction.on_commit(lambda: send_mail(
+                subject=f'Изменён статус заказа №{order.id}',
+                message=(
+                    f'Здравствуйте, {order.user.first_name}!\\n\\n'
+                    f'Статус вашего заказа №{order.id} изменён.\\n'
+                    f'Новый статус: {order.get_status_display()}.'
+                ),
+                from_email=None,
+                recipient_list=[order.user.email],
+                fail_silently=False
+            ))
 
         return Response({
             'Status': True,
